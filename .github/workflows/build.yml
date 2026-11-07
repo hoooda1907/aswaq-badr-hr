@@ -9,18 +9,37 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # الحديثة: ويندوز 10 (1809+) و 11 — Qt 6
+          - flavor: modern
+            python: '3.11'
+            req: requirements.txt
+            iscc_define: ''
+            setup_name: AswaqBadrHR-Setup
+            zip_name: AswaqBadrHR-Portable
+          # Legacy: ويندوز 10 القديم (مثل 1607) و 8.1 — Qt 5
+          - flavor: legacy
+            python: '3.10'
+            req: requirements-legacy.txt
+            iscc_define: '/DLEGACY'
+            setup_name: AswaqBadrHR-Legacy-Setup
+            zip_name: AswaqBadrHR-Legacy-Portable
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: ${{ matrix.python }}
           cache: pip
+          cache-dependency-path: ${{ matrix.req }}
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pyinstaller
+          pip install -r ${{ matrix.req }} pyinstaller
 
       - name: Build EXE (PyInstaller)
         run: >
@@ -41,29 +60,29 @@ jobs:
           Copy-Item dist/AswaqBadrHR.exe portable/AswaqBadrHR/
           "portable" | Out-File portable/AswaqBadrHR/portable.txt
           Copy-Item installer/vc_redist.x64.exe portable/AswaqBadrHR/
-          "لو ظهرت رسالة DLL load failed شغّل vc_redist.x64.exe مرة واحدة ثم أعد تشغيل البرنامج (ويندوز 10 أو أحدث 64 بت)" | Out-File portable/AswaqBadrHR/اقرأني.txt -Encoding utf8
-          Compress-Archive -Path portable/AswaqBadrHR -DestinationPath AswaqBadrHR-Portable.zip
+          "لو ظهرت رسالة DLL load failed شغّل vc_redist.x64.exe مرة واحدة ثم أعد تشغيل البرنامج (64 بت)" | Out-File portable/AswaqBadrHR/اقرأني.txt -Encoding utf8
+          Compress-Archive -Path portable/AswaqBadrHR -DestinationPath "${{ matrix.zip_name }}.zip"
 
       - name: Installer (Inno Setup)
         shell: pwsh
         run: |
           choco install innosetup -y --no-progress
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\setup.iss
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" ${{ matrix.iscc_define }} installer\setup.iss
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AswaqBadrHR-Setup
-          path: dist_installer/AswaqBadrHR-Setup.exe
+          name: ${{ matrix.setup_name }}
+          path: dist_installer/${{ matrix.setup_name }}.exe
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AswaqBadrHR-Portable
-          path: AswaqBadrHR-Portable.zip
+          name: ${{ matrix.zip_name }}
+          path: ${{ matrix.zip_name }}.zip
 
       - name: Publish release (tags only)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist_installer/AswaqBadrHR-Setup.exe
-            AswaqBadrHR-Portable.zip
+            dist_installer/${{ matrix.setup_name }}.exe
+            ${{ matrix.zip_name }}.zip
