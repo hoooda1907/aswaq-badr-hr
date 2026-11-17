@@ -13,20 +13,20 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # الحديثة: ويندوز 10 (1809+) و 11 — Qt 6
-          - flavor: modern
+          # نسخة ويندوز 11 — Qt 6
+          - flavor: win11
             python: '3.11'
             req: requirements.txt
             iscc_define: ''
-            setup_name: AswaqBadrHR-Setup
-            zip_name: AswaqBadrHR-Portable
-          # Legacy: ويندوز 10 القديم (مثل 1607) و 8.1 — Qt 5
-          - flavor: legacy
-            python: '3.10'
+            setup_name: RMT_HR-Win11-Setup
+            zip_name: RMT_HR-Win11-Portable
+          # نسخة ويندوز 10 وما قبله (حتى ويندوز 7 SP1) — Qt 5 / Python 3.8
+          - flavor: win10-legacy
+            python: '3.8'
             req: requirements-legacy.txt
             iscc_define: '/DLEGACY'
-            setup_name: AswaqBadrHR-Legacy-Setup
-            zip_name: AswaqBadrHR-Legacy-Portable
+            setup_name: RMT_HR-Win10-Legacy-Setup
+            zip_name: RMT_HR-Win10-Legacy-Portable
     steps:
       - uses: actions/checkout@v4
 
@@ -41,10 +41,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r ${{ matrix.req }} pyinstaller
 
+      - name: Run tests
+        run: python -m unittest tests.test_night_shift tests.test_import_rules tests.test_direction tests.test_licensing tests.test_branches tests.test_printing_logic tests.test_master_edits
+
       - name: Build EXE (PyInstaller)
         run: >
           pyinstaller --noconfirm --clean --onefile --windowed
-          --name AswaqBadrHR
+          --name RMT_HR
           --icon assets/icon.ico
           --add-data "assets;assets"
           main.py
@@ -56,18 +59,23 @@ jobs:
       - name: Portable ZIP
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path portable/AswaqBadrHR | Out-Null
-          Copy-Item dist/AswaqBadrHR.exe portable/AswaqBadrHR/
-          "portable" | Out-File portable/AswaqBadrHR/portable.txt
-          Copy-Item installer/vc_redist.x64.exe portable/AswaqBadrHR/
-          "لو ظهرت رسالة DLL load failed شغّل vc_redist.x64.exe مرة واحدة ثم أعد تشغيل البرنامج (64 بت)" | Out-File portable/AswaqBadrHR/اقرأني.txt -Encoding utf8
-          Compress-Archive -Path portable/AswaqBadrHR -DestinationPath "${{ matrix.zip_name }}.zip"
+          New-Item -ItemType Directory -Force -Path portable/RMT_HR | Out-Null
+          Copy-Item dist/RMT_HR.exe portable/RMT_HR/
+          "portable" | Out-File portable/RMT_HR/portable.txt
+          Copy-Item installer/vc_redist.x64.exe portable/RMT_HR/
+          "لو ظهرت رسالة DLL load failed شغّل vc_redist.x64.exe مرة واحدة ثم أعد تشغيل البرنامج (64 بت)" | Out-File portable/RMT_HR/اقرأني.txt -Encoding utf8
+          Compress-Archive -Path portable/RMT_HR -DestinationPath "${{ matrix.zip_name }}.zip"
 
       - name: Installer (Inno Setup)
         shell: pwsh
         run: |
           choco install innosetup -y --no-progress
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" ${{ matrix.iscc_define }} installer\setup.iss
+
+      # مولّد الأكواد للمطوّر فقط — لا يُوزَّع مع البرنامج
+      - name: Build keygen
+        if: matrix.flavor == 'win11'
+        run: pyinstaller --noconfirm --onefile --windowed --name RMT_HR-Keygen --distpath dist_keygen tools/keygen.py
 
       - uses: actions/upload-artifact@v4
         with:
@@ -78,6 +86,12 @@ jobs:
         with:
           name: ${{ matrix.zip_name }}
           path: ${{ matrix.zip_name }}.zip
+
+      - uses: actions/upload-artifact@v4
+        if: matrix.flavor == 'win11'
+        with:
+          name: RMT_HR-Keygen
+          path: dist_keygen/RMT_HR-Keygen.exe
 
       - name: Publish release (tags only)
         if: startsWith(github.ref, 'refs/tags/v')
