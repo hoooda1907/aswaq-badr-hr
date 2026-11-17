@@ -2,7 +2,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QLabel, QLineEdit, QPushButton, QFormLayout,
                                QListWidget, QHBoxLayout, QInputDialog)
 
-from .. import APP_NAME, auth
+from .. import auth, branding
 from .common import logo_label, signature_label, warn, info, ask
 from .passgen import PasswordGeneratorDialog
 
@@ -18,11 +18,11 @@ class LoginDialog(QDialog):
     def __init__(self, db):
         super().__init__()
         self.db, self.user = db, None
-        self.setWindowTitle(APP_NAME + " — تسجيل الدخول")
+        self.setWindowTitle(branding.name() + " — تسجيل الدخول")
         self.setMinimumWidth(380)
         lay = QVBoxLayout(self)
         lay.addWidget(logo_label(130))
-        t = QLabel("<h2 style='color:#1b9e4b'>%s</h2>" % APP_NAME)
+        t = QLabel("<h2 style='color:#1b9e4b'>%s</h2>" % branding.name())
         t.setAlignment(Qt.AlignCenter)
         lay.addWidget(t)
         self.u, self.p = QLineEdit(), _pw()
@@ -66,7 +66,7 @@ class SetupPasswordDialog(QDialog):
         lay = QVBoxLayout(self)
         lay.addWidget(logo_label(110))
         lay.addWidget(QLabel("<b>مرحباً بك في %s</b><br>من فضلك أنشئ اسم مستخدم وكلمة مرور للبرنامج.<br>"
-                             "يمكنك تغييرها في أي وقت من قائمة الإعدادات." % APP_NAME))
+                             "يمكنك تغييرها في أي وقت من قائمة الإعدادات." % branding.name()))
         form = QFormLayout()
         self.u = QLineEdit("admin")
         self.p1, self.p2 = _pw(), _pw()

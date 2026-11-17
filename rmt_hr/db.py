@@ -17,11 +17,14 @@ CREATE TABLE IF NOT EXISTS payroll(
   insurance REAL DEFAULT 0, advance REAL DEFAULT 0, leave_days INTEGER DEFAULT 0,
   req_hours REAL DEFAULT 10, grace_min INTEGER DEFAULT 20, ot_rate REAL DEFAULT 1,
   ot_manual REAL, shift_mode TEXT DEFAULT 'auto', leave_paid INTEGER DEFAULT 1,
-  deduct_short INTEGER DEFAULT 0, notes TEXT DEFAULT '', fp_manual REAL,
+  deduct_short INTEGER DEFAULT 0, notes TEXT DEFAULT '', fp_manual REAL, comp_added REAL DEFAULT 0,
   PRIMARY KEY(branch, ym, code));
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS employees_master(branch TEXT, code TEXT, name TEXT DEFAULT '', salary REAL DEFAULT 0,
   allowances REAL DEFAULT 0, insurance REAL DEFAULT 0, annual_days REAL DEFAULT 21, PRIMARY KEY(branch, code));
+CREATE TABLE IF NOT EXISTS day_status(branch TEXT, code TEXT, day TEXT, status TEXT, PRIMARY KEY(branch, code, day));
+CREATE TABLE IF NOT EXISTS holidays(branch TEXT, day TEXT, name TEXT DEFAULT '', mult REAL DEFAULT 0, PRIMARY KEY(branch, day));
+CREATE TABLE IF NOT EXISTS holiday_choice(branch TEXT, code TEXT, day TEXT, choice TEXT, PRIMARY KEY(branch, code, day));
 CREATE TABLE IF NOT EXISTS punch_edits(id INTEGER PRIMARY KEY AUTOINCREMENT, branch TEXT, code TEXT, op TEXT,
   ts TEXT, new_ts TEXT, kind TEXT DEFAULT '');
 """
@@ -46,6 +49,8 @@ class Database:
         cols = {r[1] for r in self.conn.execute("PRAGMA table_info(payroll)")}
         if "fp_manual" not in cols:          # ترقية قواعد البيانات القديمة
             self.conn.execute("ALTER TABLE payroll ADD COLUMN fp_manual REAL")
+        if "comp_added" not in cols:
+            self.conn.execute("ALTER TABLE payroll ADD COLUMN comp_added REAL DEFAULT 0")
         pcols = {r[1] for r in self.conn.execute("PRAGMA table_info(punches)")}
         if "kind" not in pcols:
             self.conn.execute("ALTER TABLE punches ADD COLUMN kind TEXT DEFAULT ''")
@@ -58,6 +63,49 @@ class Database:
 
     def set_setting(self, key, value):
         self.conn.execute("INSERT OR REPLACE INTO settings VALUES(?,?)", (key, value))
+        self.conn.commit()
+
+    # ---------------- حالة كل يوم (راحة / إجازة سنوية / غياب / بدون أجر / خصم من رصيد البدلات)
+    def day_statuses(self, branch, code, ym):
+        return {datetime.strptime(r["day"], "%Y-%m-%d").date(): r["status"] for r in self.conn.execute(
+            "SELECT day, status FROM day_status WHERE branch=? AND code=? AND day LIKE ?", (branch, code, ym + "%"))}
+
+    def set_day_status(self, branch, code, day, status):
+        """status=None يرجع اليوم للتوزيع التلقائي."""
+        k = day.strftime("%Y-%m-%d")
+        if status:
+            self.conn.execute("INSERT OR REPLACE INTO day_status VALUES(?,?,?,?)", (branch, code, k, status))
+        else:
+            self.conn.execute("DELETE FROM day_status WHERE branch=? AND code=? AND day=?", (branch, code, k))
+        self.conn.commit()
+
+    # ---------------- الأجازات الرسمية (على مستوى الفرع) واختيار كل موظف (أجر إضافي / بدل إجازة)
+    def holidays_of(self, branch, ym):
+        return [{"day": datetime.strptime(r["day"], "%Y-%m-%d").date(), "name": r["name"], "mult": r["mult"]}
+                for r in self.conn.execute("SELECT * FROM holidays WHERE branch=? AND day LIKE ? ORDER BY day",
+                                           (branch, ym + "%"))]
+
+    def set_holiday(self, branch, day, name="", mult=0.0):
+        self.conn.execute("INSERT OR REPLACE INTO holidays VALUES(?,?,?,?)",
+                          (branch, day.strftime("%Y-%m-%d"), (name or "").strip(), float(mult)))
+        self.conn.commit()
+
+    def delete_holiday(self, branch, day):
+        k = day.strftime("%Y-%m-%d")
+        self.conn.execute("DELETE FROM holidays WHERE branch=? AND day=?", (branch, k))
+        self.conn.execute("DELETE FROM holiday_choice WHERE branch=? AND day=?", (branch, k))
+        self.conn.commit()
+
+    def holiday_choices(self, branch, code, ym):
+        return {datetime.strptime(r["day"], "%Y-%m-%d").date(): r["choice"] for r in self.conn.execute(
+            "SELECT day, choice FROM holiday_choice WHERE branch=? AND code=? AND day LIKE ?", (branch, code, ym + "%"))}
+
+    def set_holiday_choice(self, branch, code, day, choice):
+        k = day.strftime("%Y-%m-%d")
+        if choice == "comp":
+            self.conn.execute("INSERT OR REPLACE INTO holiday_choice VALUES(?,?,?,?)", (branch, code, k, choice))
+        else:
+            self.conn.execute("DELETE FROM holiday_choice WHERE branch=? AND code=? AND day=?", (branch, code, k))
         self.conn.commit()
 
     # ---------------- الفروع
@@ -347,7 +395,7 @@ class Database:
 
     def save_employee(self, e):
         keys = ["name", "salary", "allowances", "penalties", "insurance", "advance", "leave_days", "req_hours",
-                "grace_min", "ot_rate", "ot_manual", "shift_mode", "leave_paid", "deduct_short", "notes", "fp_manual"]
+                "grace_min", "ot_rate", "ot_manual", "shift_mode", "leave_paid", "deduct_short", "notes", "fp_manual", "comp_added"]
         self.conn.execute(
             "UPDATE payroll SET %s WHERE branch=? AND ym=? AND code=?" % ",".join(k + "=?" for k in keys),
             [e.get(k) for k in keys] + [e["branch"], e["ym"], e["code"]])
@@ -362,4 +410,6 @@ class Database:
         self.conn.execute("DELETE FROM punches WHERE branch=? AND ym=? AND code=?", (branch, ym, code))
         self.conn.execute("DELETE FROM punch_edits WHERE branch=? AND code=? AND (ts LIKE ? OR new_ts LIKE ?)",
                           (branch, code, ym + "%", ym + "%"))
+        self.conn.execute("DELETE FROM day_status WHERE branch=? AND code=? AND day LIKE ?", (branch, code, ym + "%"))
+        self.conn.execute("DELETE FROM holiday_choice WHERE branch=? AND code=? AND day LIKE ?", (branch, code, ym + "%"))
         self.conn.commit()

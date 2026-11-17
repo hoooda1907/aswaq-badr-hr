@@ -6,7 +6,7 @@ from PySide6.QtGui import QImage, QPixmap, QTextDocument, QPageSize, QPageLayout
 from PySide6.QtPrintSupport import QPrinter, QPrintPreviewDialog
 from PySide6.QtWidgets import QFileDialog, QLabel, QMessageBox
 
-from .. import DEVELOPER, APP_ID
+from .. import DEVELOPER, APP_ID, branding
 
 GREEN = "#1b9e4b"
 GREEN_DARK = "#147a3a"
@@ -55,8 +55,13 @@ QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top right; pa
 """ % {"g": GREEN, "gd": GREEN_DARK}
 
 
+def logo_file():
+    """الشعار المخصص لو تم تغييره، وإلا الشعار الافتراضي."""
+    return branding.logo() or resource_path("assets/logo.png")
+
+
 def logo_pixmap(size):
-    pm = QPixmap(resource_path("assets/logo.png"))
+    pm = QPixmap(logo_file())
     return pm.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
 
 
@@ -92,7 +97,7 @@ def ask(parent, text, title="تأكيد"):
 
 def make_doc(html):
     doc = QTextDocument()
-    doc.addResource(QTextDocument.ImageResource, QUrl("logo"), QImage(resource_path("assets/logo.png")))
+    doc.addResource(QTextDocument.ImageResource, QUrl("logo"), QImage(logo_file()))
     doc.setHtml(html)
     return doc
 

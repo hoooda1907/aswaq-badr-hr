@@ -2,7 +2,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QLabel, QLineEdit, QPushButton, QGroupBox, QFormLayout,
                                QHBoxLayout)
 
-from .. import APP_NAME, licensing
+from .. import branding, licensing
 from .common import logo_label, signature_label, warn, info
 
 _REASONS = {"trial": "انتهت مدة النسخة التجريبية (أسبوع).",
@@ -16,7 +16,7 @@ class ActivationDialog(QDialog):
     def __init__(self, lic, expired=False, reason="trial", parent=None):
         super().__init__(parent)
         self.lic = lic
-        self.setWindowTitle(APP_NAME + " — تفعيل البرنامج")
+        self.setWindowTitle(branding.name() + " — تفعيل البرنامج")
         self.setMinimumWidth(460)
         lay = QVBoxLayout(self)
         lay.addWidget(logo_label(100))

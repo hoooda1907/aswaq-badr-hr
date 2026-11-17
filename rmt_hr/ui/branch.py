@@ -1,7 +1,7 @@
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QInputDialog)
 
-from .. import APP_NAME
+from .. import branding
 from ..constants import BRANCH_MODE
 from .common import logo_label, signature_label, warn
 
@@ -12,11 +12,11 @@ class BranchWindow(QWidget):
         self.on_choose, self.db = on_choose, db
         self.dynamic = BRANCH_MODE == "dynamic"
         self.setObjectName("root")
-        self.setWindowTitle(APP_NAME + " — اختيار الفرع")
+        self.setWindowTitle(branding.name() + " — اختيار الفرع")
         lay = QVBoxLayout(self)
         lay.setAlignment(Qt.AlignCenter)
         lay.addWidget(logo_label(150))
-        t = QLabel("<h1 style='color:#1b9e4b'>%s</h1><p align='center'>اختر الفرع</p>" % APP_NAME)
+        t = QLabel("<h1 style='color:#1b9e4b'>%s</h1><p align='center'>اختر الفرع</p>" % branding.name())
         t.setAlignment(Qt.AlignCenter)
         lay.addWidget(t)
         self.box = QVBoxLayout()

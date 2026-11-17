@@ -1,18 +1,20 @@
 from collections import Counter
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QIcon
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox,
                                QLineEdit, QTableWidget, QTableWidgetItem, QHeaderView, QFileDialog, QMenu,
                                QToolButton, QDialog, QFormLayout, QAbstractItemView, QApplication)
 
-from .. import APP_NAME, reports, licensing
+from .. import branding, reports, licensing
+from ..service import ledger
 from ..excel_reader import read_table, extract_punches_dir, ReadError
 from ..employee_import import parse_employee_sheet, apply_employee_data, report_text
 from .. import templates
 from ..service import compute_all
 from . import printing
-from .common import logo_label, signature_label, info, warn, ask, print_preview
+from .brand_dialog import BrandingDialog
+from .common import logo_label, logo_pixmap, resource_path, signature_label, info, warn, ask, print_preview
 from .print_dialog import PrintSettingsDialog
 from .employee_dialog import EmployeeDialog
 from .summary_dialog import SummaryDialog
@@ -20,6 +22,7 @@ from .login import ChangePasswordDialog, UsersDialog
 from .rules_dialog import FpRulesDialog
 from .activation import ActivationDialog
 from .employees_dialog import EmployeesListDialog
+from .holidays_dialog import HolidaysDialog
 
 COLS = ["الكود", "الاسم", "الشيفت", "أيام الحضور", "بصمات الدخول", "بصمات الخروج", "بصمات ناقصة", "الراحة", "إجازة", "غياب", "إجمالي الساعات", "متوسط الساعات", "صافي المرتب"]
 
@@ -49,7 +52,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.db, self.user, self.branch, self.on_switch = db, user, branch, on_switch
         self.items = []
-        self.setWindowTitle("%s — %s" % (APP_NAME, branch))
+        self.setWindowTitle("%s — %s" % (branding.name(), branch))
         self.resize(1200, 760)
 
         central = QWidget()
@@ -58,10 +61,10 @@ class MainWindow(QMainWindow):
         root = QVBoxLayout(central)
 
         top = QHBoxLayout()
-        top.addWidget(logo_label(56))
-        title = QLabel("<span style='font-size:17pt;color:#1b9e4b'><b>%s</b></span><br>الفرع: <b>%s</b>   |   المستخدم: %s"
-                       % (APP_NAME, branch, user["username"]))
-        top.addWidget(title)
+        self.top_logo = logo_label(56)
+        top.addWidget(self.top_logo)
+        self.title_lbl = QLabel()
+        top.addWidget(self.title_lbl)
         top.addStretch()
         top.addWidget(QLabel("الشهر:"))
         self.cmb = QComboBox()
@@ -86,6 +89,7 @@ class MainWindow(QMainWindow):
             return b
         mk("استيراد شيت البصمة", self.import_sheet)
         mk("قائمة الموظفين", self.open_employees_list, "secondary")
+        mk("الأجازات الرسمية", self.open_holidays, "secondary")
         mk("استيراد بيانات الموظفين", self.import_employees)
         tb = QToolButton()
         tb.setText("تصدير شيت فارغ ▾")
@@ -120,6 +124,8 @@ class MainWindow(QMainWindow):
         if user.get("is_admin"):
             menu.addAction("إدارة المستخدمين", lambda: UsersDialog(self.db).exec())
         self.act_activate = menu.addAction("تفعيل البرنامج", self.open_activation)
+        if user.get("is_admin"):
+            menu.addAction("اسم البرنامج والشعار", self.open_branding)
         menu.addAction("حول البرنامج", self.about)
         st.setMenu(menu)
         bar.addWidget(st)
@@ -145,6 +151,7 @@ class MainWindow(QMainWindow):
         self.status = QLabel("")
         root.addWidget(self.status)
         root.addWidget(signature_label())
+        self.apply_branding()
         self.update_license_ui()
         self._lic_timer = QTimer(self)
         self._lic_timer.timeout.connect(self.check_license)
@@ -276,6 +283,25 @@ class MainWindow(QMainWindow):
     def export_punch_template(self):
         self._save_template("تصدير شيت البصمات", "شيت_البصمات.xlsx", templates.export_punch_template)
 
+    def apply_branding(self):
+        """يطبّق الاسم والشعار الجديدين فوراً على هذه الشاشة."""
+        self.setWindowTitle("%s — %s" % (branding.name(), self.branch))
+        self.title_lbl.setText("<span style='font-size:17pt;color:#1b9e4b'><b>%s</b></span><br>الفرع: <b>%s</b>   |   المستخدم: %s"
+                               % (branding.name(), self.branch, self.user["username"]))
+        self.top_logo.setPixmap(logo_pixmap(56))
+        QApplication.instance().setApplicationName(branding.name())
+        QApplication.instance().setWindowIcon(QIcon(branding.logo() or resource_path("assets/icon.ico")))
+
+    def open_branding(self):
+        if BrandingDialog(self.db, self).exec() == QDialog.Accepted:
+            self.apply_branding()
+
+    def open_holidays(self):
+        if not self.ym:
+            return warn(self, "استورد شيت البصمة أولاً لتحديد الشهر")
+        HolidaysDialog(self.db, self.branch, self.ym, self).exec()
+        self.refresh()
+
     def open_employees_list(self):
         EmployeesListDialog(self.db, self.branch, self).exec()
 
@@ -296,7 +322,8 @@ class MainWindow(QMainWindow):
     def _voucher_builders(self, items):
         st = printing.load_settings(self.db)
         return [(lambda f, it=it: reports.voucher_html(self.branch, self.ym, it[0], it[2], it[3],
-                                                       scale=f, show_logo=st["logo"])) for it in items], st
+                                                       scale=f, show_logo=st["logo"],
+                                                       ledger=ledger(self.db, self.branch, it[0]["code"], self.ym))) for it in items], st
 
     def print_all(self):
         if not self.items:
@@ -374,7 +401,7 @@ class MainWindow(QMainWindow):
         lic = licensing.current()
         st = lic.status() if lic else {"state": "activated", "days_left": 0}
         lic_txt = {"activated": "مفعّل", "trial": "نسخة تجريبية (المتبقي %d يوم)" % st["days_left"]}.get(st["state"], "غير مفعّل")
-        info(self, "%s\nالإصدار 1.0.0\nالترخيص: %s\n\nتصميم وتطوير: Mahmoud Thabet" % (APP_NAME, lic_txt))
+        info(self, "%s\nالإصدار 1.0.0\nالترخيص: %s\n\nتصميم وتطوير: Mahmoud Thabet" % (branding.name(), lic_txt))
 
     def switch_branch(self):
         QTimer.singleShot(0, self.on_switch)

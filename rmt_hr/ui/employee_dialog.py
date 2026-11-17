@@ -1,7 +1,7 @@
 import calendar
 from datetime import date
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget, QTableWidget,
                                QTableWidgetItem, QHeaderView, QLabel, QGroupBox, QGridLayout, QSpinBox,
@@ -10,10 +10,12 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QW
 
 from .. import reports
 from ..constants import SHIFT_MODES, SHIFT_LABELS, DAY_NAMES_AR
-from ..service import compute_employee
+from ..leaves import PICKABLE, STATUS_LABELS, CHOICE_LABELS
+from ..service import compute_employee, ledger
 from . import printing
 from .common import warn
 from .punch_editor import PunchEditorDialog
+from .dates_dialog import DatesListDialog
 
 
 def _money_spin(maxv=10_000_000):
@@ -81,8 +83,8 @@ class EmployeeDialog(QDialog):
     def _build_attendance_tab(self):
         w = QWidget()
         lay = QVBoxLayout(w)
-        self.tbl = QTableWidget(0, 7)
-        self.tbl.setHorizontalHeaderLabels(["التاريخ", "اليوم", "الشيفت", "الدخول", "الخروج", "ساعات العمل", "ملاحظات"])
+        self.tbl = QTableWidget(0, 8)
+        self.tbl.setHorizontalHeaderLabels(["التاريخ", "اليوم", "الشيفت", "الدخول", "الخروج", "ساعات العمل", "ملاحظات", "الحالة (اختيار يدوي)"])
         self.tbl.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.tbl.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.tbl.setAlternatingRowColors(True)
@@ -122,23 +124,45 @@ class EmployeeDialog(QDialog):
             gl.addWidget(lb, 1, i)
         lay.addWidget(g)
 
-        g2 = QGroupBox("توزيع الأيام المتبقية (مجموعها يساوي المتبقي دائماً)")
+        g2 = QGroupBox("توزيع أيام الشهر (حضور + راحة + سنوية + بدون أجر + غياب + خصم رصيد = أيام الشهر) — اضغط أي رقم لعرض التواريخ")
         g2l = QGridLayout(g2)
+        self.STATUS_COLS = (("rest", "راحة أسبوعية"), ("annual", "إجازة سنوية"), ("unpaid", "إجازة بإذن / بدون أجر"),
+                            ("absent", "غياب"), ("comp", "خصم من رصيد البدلات"))
+        self.bt_month, self.bt_year = {}, {}
+        g2l.addWidget(QLabel(""), 0, 0)
+        g2l.addWidget(QLabel("<b>هذا الشهر</b>"), 1, 0)
+        g2l.addWidget(QLabel("<b>هذه السنة</b>"), 2, 0)
+        for i, (key, label) in enumerate(self.STATUS_COLS, start=1):
+            g2l.addWidget(QLabel(label), 0, i, alignment=Qt.AlignCenter)
+            for row_i, store, scope in ((1, self.bt_month, "month"), (2, self.bt_year, "year")):
+                bt = QPushButton("0")
+                bt.setObjectName("secondary")
+                bt.setStyleSheet("font-size:16pt; font-weight:bold; padding:6px;")
+                bt.clicked.connect(lambda _=False, k=key, sc=scope: self._show_dates(k, sc))
+                store[key] = bt
+                g2l.addWidget(bt, row_i, i)
         self.sp_leave, self.sp_absent = QSpinBox(), QSpinBox()
-        for sp in (self.sp_leave, self.sp_absent):
-            sp.setAlignment(Qt.AlignCenter)
-            sp.setStyleSheet("font-size:18pt; padding:6px;")
-        g2l.addWidget(QLabel("إجازة بإذن"), 0, 0, alignment=Qt.AlignCenter)
-        g2l.addWidget(QLabel("غياب"), 0, 1, alignment=Qt.AlignCenter)
-        g2l.addWidget(self.sp_leave, 1, 0)
-        g2l.addWidget(self.sp_absent, 1, 1)
+        self.sp_leave.setAlignment(Qt.AlignCenter)
+        self.sp_absent.setVisible(False)
+        g2l.addWidget(QLabel("إجازة بإذن (تلقائي) — عدد أيام يوزعها البرنامج على الأيام غير المحددة"), 3, 0, 1, 3)
+        g2l.addWidget(self.sp_leave, 3, 3, 1, 2)
+        self.lb_ledger = QLabel()
+        self.lb_ledger.setStyleSheet("font-size:12pt;")
+        self.lb_ledger.setAlignment(Qt.AlignCenter)
+        g2l.addWidget(self.lb_ledger, 4, 0, 1, 6)
         self.lb_check = QLabel()
         self.lb_check.setAlignment(Qt.AlignCenter)
-        g2l.addWidget(self.lb_check, 2, 0, 1, 2)
+        g2l.addWidget(self.lb_check, 5, 0, 1, 6)
+        self.lb_excess = QLabel()
+        self.lb_excess.setAlignment(Qt.AlignCenter)
+        self.lb_excess.setStyleSheet("color:#c0392b; font-weight:bold;")
+        self.b_excess = QPushButton("تحويل الزيادة إلى خصم من رصيد البدلات")
+        self.b_excess.clicked.connect(self._convert_excess)
+        g2l.addWidget(self.lb_excess, 6, 0, 1, 4)
+        g2l.addWidget(self.b_excess, 6, 4, 1, 2)
         lay.addWidget(g2)
         lay.addStretch()
         self.sp_leave.valueChanged.connect(self._leave_changed)
-        self.sp_absent.valueChanged.connect(self._absent_changed)
         self.tabs.addTab(w, "الحضور والغياب والإجازات")
 
     # ------------------------------------------------------------ تبويب الراتب
@@ -183,6 +207,20 @@ class EmployeeDialog(QDialog):
         form.addRow(self.c_leave_paid)
         form.addRow(self.c_short)
         form.addRow("ملاحظات", self.f_notes)
+        self.f_comp = QDoubleSpinBox()
+        self.f_comp.setRange(0, 366)
+        self.f_comp.setDecimals(1)
+        self.f_comp.setSingleStep(0.5)
+        self.f_comp.setSuffix(" يوم")
+        form.addRow("بدلات إجازة مستحقة (أيام تُضاف للرصيد)", self.f_comp)
+        self.hol_lbl = QLabel("<b>الأجازات الرسمية في هذا الشهر</b>")
+        self.hol_tbl = QTableWidget(0, 4)
+        self.hol_tbl.setHorizontalHeaderLabels(["التاريخ", "الأجازة", "مقابل العمل", "الاحتساب لهذا الموظف"])
+        self.hol_tbl.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.hol_tbl.verticalHeader().setVisible(False)
+        self.hol_tbl.setMaximumHeight(130)
+        form.addRow(self.hol_lbl)
+        form.addRow(self.hol_tbl)
         form.addRow(self.lb_fp)
         form.addRow(self.c_fp, self.f_fp)
         fprow = QHBoxLayout()
@@ -202,7 +240,7 @@ class EmployeeDialog(QDialog):
         self.tabs.addTab(w, "الراتب")
 
         for sp in (self.f_salary, self.f_allow, self.f_pen, self.f_ins, self.f_adv, self.f_req, self.f_grace,
-                   self.f_rate, self.f_ot, self.f_fp):
+                   self.f_rate, self.f_ot, self.f_fp, self.f_comp):
             sp.valueChanged.connect(self._changed)
         self.f_shift.currentIndexChanged.connect(self._changed)
         self.f_notes.textChanged.connect(self._changed)
@@ -229,6 +267,7 @@ class EmployeeDialog(QDialog):
         self.c_leave_paid.setChecked(bool(e["leave_paid"]))
         self.c_short.setChecked(bool(e["deduct_short"]))
         self.f_notes.setText(e["notes"] or "")
+        self.f_comp.setValue(e.get("comp_added") or 0)
         self.sp_leave.setValue(e["leave_days"] or 0)
 
     def collect(self):
@@ -240,7 +279,7 @@ class EmployeeDialog(QDialog):
             ot_manual=self.f_ot.value() if self.c_ot.isChecked() else None,
             fp_manual=self.f_fp.value() if self.c_fp.isChecked() else None,
             leave_paid=int(self.c_leave_paid.isChecked()), deduct_short=int(self.c_short.isChecked()),
-            notes=self.f_notes.text(), leave_days=self.sp_leave.value())
+            notes=self.f_notes.text(), leave_days=self.sp_leave.value(), comp_added=self.f_comp.value())
         return e
 
     # ------------------------------------------------------------ ردود الأفعال
@@ -257,19 +296,32 @@ class EmployeeDialog(QDialog):
     def _leave_changed(self, v):
         if self._loading or not self._cur:
             return
-        self._loading = True
-        self.sp_absent.setValue(self._cur[1].remaining - v)
-        self._loading = False
         self.dirty = True
         self.recalc()
 
-    def _absent_changed(self, v):
-        if self._loading or not self._cur:
+    def _status_changed(self, dt, status):
+        self.db.set_day_status(self.branch, self.code, dt, status)
+        QTimer.singleShot(0, self.recalc)
+
+    def _holiday_choice_changed(self, dt, choice):
+        self.db.set_holiday_choice(self.branch, self.code, dt, choice)
+        QTimer.singleShot(0, self.recalc)
+
+    def _show_dates(self, key, scope):
+        led = self._ledger
+        dates = led["month_dates" if scope == "month" else "year_dates"].get(key, [])
+        label = dict(self.STATUS_COLS)[key]
+        DatesListDialog("%s — %s" % (label, "هذا الشهر" if scope == "month" else "سنة " + self.ym[:4]), dates, self).exec()
+
+    def _convert_excess(self):
+        """يحوّل أيام الراحة الزائدة عن المسموح (يوم بعد كل 6 أيام عمل) إلى «خصم من رصيد البدلات»."""
+        plan = self._cur[2]["plan"]
+        n = plan.rest_excess
+        if not n:
             return
-        self._loading = True
-        self.sp_leave.setValue(self._cur[1].remaining - v)
-        self._loading = False
-        self.dirty = True
+        rest_dates = plan.dates_of("rest")
+        for dt in sorted(plan.explicit & set(rest_dates), reverse=True)[:n]:
+            self.db.set_day_status(self.branch, self.code, dt, "comp")
         self.recalc()
 
     # ------------------------------------------------------------ إعادة الحساب
@@ -280,12 +332,9 @@ class EmployeeDialog(QDialog):
         days, s, pay = compute_employee(self.db, self.branch, self.ym, emp, self.punches)
         self._cur = (days, s, pay, emp)
 
+        plan = pay["plan"]
         self._loading = True
-        self.sp_leave.setMaximum(s.remaining)
-        self.sp_absent.setMaximum(s.remaining)
-        leave = min(self.sp_leave.value(), s.remaining)
-        self.sp_leave.setValue(leave)
-        self.sp_absent.setValue(s.remaining - leave)
+        self.sp_leave.setMaximum(max(0, s.month_days - s.present))
         self._loading = False
 
         self._loading = True
@@ -307,15 +356,33 @@ class EmployeeDialog(QDialog):
         self.lb_in.setText(str(s.in_punches))
         self.lb_out.setText(str(s.out_punches))
         self.lb_miss.setText(str(s.missing_punches))
-        total = s.present + s.rest + pay["leave"] + pay["absent"]
+        total = s.present + pay["rest_n"] + pay["annual"] + pay["leave"] + pay["absent"] + pay["comp_days"]
         ok = total == s.month_days
-        self.lb_check.setText("حضور %d + راحة %d + إجازة %d + غياب %d = %d يوم (أيام الشهر: %d) %s"
-                              % (s.present, s.rest, pay["leave"], pay["absent"], total, s.month_days, "✔" if ok else "✘"))
+        self.lb_check.setText("حضور %d + راحة %d + سنوية %d + بدون أجر %d + غياب %d + خصم رصيد %d = %d يوم (أيام الشهر: %d) %s"
+                              % (s.present, pay["rest_n"], pay["annual"], pay["leave"], pay["absent"], pay["comp_days"],
+                                 total, s.month_days, "✔" if ok else "✘"))
         self.lb_check.setStyleSheet("font-size:12pt; color:%s;" % ("#1b9e4b" if ok else "#c0392b"))
-        self._refresh_table(days, s)
+        self._ledger = ledger(self.db, self.branch, self.code, self.ym, override=(emp, plan))
+        led = self._ledger
+        month_counts = {"rest": pay["rest_n"], "annual": pay["annual"], "unpaid": pay["leave"],
+                        "absent": pay["absent"], "comp": pay["comp_days"]}
+        for key, _ in self.STATUS_COLS:
+            self.bt_month[key].setText(str(month_counts[key]))
+            self.bt_year[key].setText(str(len(led["year_dates"][key])))
+        left = led["annual_left"]
+        self.lb_ledger.setText("الإجازة السنوية: المستحق <b>%g</b> − المستخدم هذه السنة <b>%d</b> = المتبقي <b style='color:%s'>%g</b>"
+                               "      |      رصيد بدلات الإجازة: <b>%g</b> يوم"
+                               % (led["entitlement"], led["annual_used"], "#1b9e4b" if left >= 0 else "#c0392b", left, led["comp_balance"]))
+        ex = plan.rest_excess
+        self.lb_excess.setText("الراحة المأخوذة %d أكبر من المسموح %d (يوم بعد كل 6 أيام عمل): الزيادة %d يوم" %
+                               (pay["rest_n"], plan.rest_allowed, ex) if ex else "")
+        self.lb_excess.setVisible(bool(ex))
+        self.b_excess.setVisible(bool(ex))
+        self._refresh_holidays(plan)
+        self._refresh_table(days, s, plan)
         self._refresh_result(s, pay)
 
-    def _refresh_table(self, days, s):
+    def _refresh_table(self, days, s, plan=None):
         y, m = int(self.ym[:4]), int(self.ym[5:7])
         self.tbl.setRowCount(s.month_days)
         for d in range(1, s.month_days + 1):
@@ -349,6 +416,48 @@ class EmployeeDialog(QDialog):
                 if rec and rec.change:
                     f = it.font(); f.setBold(True); it.setFont(f)
                 self.tbl.setItem(d - 1, c, it)
+            # عمود الحالة: «حضور» أو قائمة اختيار يدوي لليوم (التلقائي يظهر باسم الحالة المحسوبة)
+            if rec:
+                it = QTableWidgetItem("حضور")
+                it.setTextAlignment(Qt.AlignCenter)
+                self.tbl.removeCellWidget(d - 1, 7)
+                self.tbl.setItem(d - 1, 7, it)
+            else:
+                auto = STATUS_LABELS.get(plan.statuses.get(dt), "") if plan else ""
+                cb = QComboBox()
+                cb.addItem("تلقائي: " + auto, None)
+                for st in PICKABLE:
+                    cb.addItem(STATUS_LABELS[st] if st != "unpaid" else "إجازة بدون أجر", st)
+                explicit = plan.statuses.get(dt) if (plan and dt in plan.explicit) else None
+                cb.setCurrentIndex(0 if not explicit else 1 + PICKABLE.index(explicit))
+                cb.currentIndexChanged.connect(lambda _i, _dt=dt, _cb=cb: self._status_changed(_dt, _cb.currentData()))
+                self.tbl.setItem(d - 1, 7, QTableWidgetItem(""))
+                self.tbl.setCellWidget(d - 1, 7, cb)
+
+    def _refresh_holidays(self, plan):
+        rows = plan.holidays
+        self.hol_tbl.setRowCount(len(rows))
+        self.hol_tbl.setVisible(bool(rows))
+        self.hol_lbl.setText("<b>الأجازات الرسمية في هذا الشهر</b>" if rows else
+                             "<b>الأجازات الرسمية:</b> لا توجد (تُضاف من الشاشة الرئيسية ← الأجازات الرسمية)")
+        for r, h in enumerate(rows):
+            for c, v in enumerate((h["date"].strftime("%d/%m"), h["name"] or "—",
+                                   {0.0: "لا يحتسب", 1.0: "يوم", 1.5: "يوم ونصف", 2.0: "يومان"}.get(h["mult"], "%g يوم" % h["mult"]))):
+                it = QTableWidgetItem(v)
+                it.setTextAlignment(Qt.AlignCenter)
+                self.hol_tbl.setItem(r, c, it)
+            if h["worked"]:
+                cb = QComboBox()
+                cb.addItem(CHOICE_LABELS["pay"], "pay")
+                cb.addItem(CHOICE_LABELS["comp"], "comp")
+                cb.setCurrentIndex(1 if h["choice"] == "comp" else 0)
+                cb.currentIndexChanged.connect(lambda _i, _d=h["date"], _cb=cb: self._holiday_choice_changed(_d, _cb.currentData()))
+                self.hol_tbl.setCellWidget(r, 3, cb)
+            else:
+                self.hol_tbl.removeCellWidget(r, 3)
+                it = QTableWidgetItem("لم يعمل — لا مقابل")
+                it.setTextAlignment(Qt.AlignCenter)
+                self.hol_tbl.setItem(r, 3, it)
 
     def _refresh_result(self, s, p):
         m = reports.money
@@ -361,6 +470,7 @@ class EmployeeDialog(QDialog):
              "<tr><td colspan='2'><hr></td></tr>",
              row("المرتب الأساسي", m(p["salary"])), row("بدلات", m(p["allowances"])),
              row("وقت إضافي (%s ساعة)" % reports.hrs(p["ot_hours"]), m(p["ot_pay"])),
+             row("أجر الأجازات الرسمية (%g يوم)" % p["holiday_pay_days"], m(p["holiday_pay"])) if p["holiday_pay_days"] else "",
              row("إجمالي المستحقات", m(p["gross"]), True, "#147a3a"),
              "<tr><td colspan='2'><hr></td></tr>",
              row("خصم الغياب (%d يوم)" % p["absent"], m(p["absence_ded"]), color="#c0392b"),
@@ -382,8 +492,8 @@ class EmployeeDialog(QDialog):
     # ------------------------------------------------------------ حفظ وطباعة
     def save(self):
         days, s, pay, emp = self._cur
-        if s.present + s.rest + pay["leave"] + pay["absent"] != s.month_days:
-            return warn(self, "مجموع الحضور والراحة والإجازة والغياب لا يساوي عدد أيام الشهر")
+        if s.present + pay["rest_n"] + pay["annual"] + pay["leave"] + pay["absent"] + pay["comp_days"] != s.month_days:
+            return warn(self, "مجموع أيام الحضور والراحة والإجازات والغياب والخصم من الرصيد لا يساوي عدد أيام الشهر")
         self.db.save_employee(emp)
         self.emp = emp
         self.dirty = False
@@ -394,7 +504,8 @@ class EmployeeDialog(QDialog):
             return None, None
         days, s, pay, emp = self._cur
         st = printing.load_settings(self.db)
-        return [lambda f: reports.voucher_html(self.branch, self.ym, emp, s, pay, scale=f, show_logo=st["logo"])], st
+        led = ledger(self.db, self.branch, self.code, self.ym)
+        return [lambda f: reports.voucher_html(self.branch, self.ym, emp, s, pay, scale=f, show_logo=st["logo"], ledger=led)], st
 
     def print_voucher(self):
         builders, st = self._voucher_builders()
@@ -420,7 +531,7 @@ class EmployeeDialog(QDialog):
     def print_punches(self):
         days, s, pay, emp = self._cur
         st = dict(printing.load_settings(self.db), layout="single")
-        builder = lambda f: reports.punches_html(self.branch, self.ym, emp, days, s, scale=f, show_logo=st["logo"])
+        builder = lambda f: reports.punches_html(self.branch, self.ym, emp, days, s, scale=f, show_logo=st["logo"], plan=pay["plan"])
         printing.preview(self, [builder], st)
 
     def closeEvent(self, ev):

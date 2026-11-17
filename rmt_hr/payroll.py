@@ -13,7 +13,7 @@ def fp_days(count, rules=None):
     return float(r["d3"])
 
 
-def calculate(emp, s, rules=None):
+def calculate(emp, s, rules=None, plan=None):
     """emp: dict بيانات الموظف للشهر، s: Summary. يرجع dict بكل بنود المرتب."""
     md = s.month_days
     salary = float(emp.get("salary") or 0)
@@ -23,8 +23,16 @@ def calculate(emp, s, rules=None):
     advance = float(emp.get("advance") or 0)
     req = float(emp.get("req_hours") or 10) or 10.0
     rate = float(emp.get("ot_rate") or 1.0)
-    leave = max(0, min(int(emp.get("leave_days") or 0), s.remaining))
-    absent = s.remaining - leave
+    if plan is not None:      # توزيع الأيام حسب الحالة اليومية (يدوي + تلقائي)
+        c = plan.counts
+        leave_legacy, unpaid = c["leave"], c["unpaid"]
+        leave, absent = leave_legacy + unpaid, c["absent"]
+        annual, comp_days, rest_n = c["annual"], c["comp"], c["rest"]
+    else:                     # الحساب القديم (عدّادان فقط)
+        leave = max(0, min(int(emp.get("leave_days") or 0), s.remaining))
+        leave_legacy, unpaid, absent = leave, 0, s.remaining - leave
+        annual = comp_days = 0
+        rest_n = s.rest
 
     daily = salary / md if md else 0.0
     hourly = daily / req
@@ -32,7 +40,9 @@ def calculate(emp, s, rules=None):
     ot_hours = float(ot_manual) if ot_manual not in (None, "") else s.ot_hours
     ot_pay = ot_hours * hourly * rate
     absence_ded = absent * daily
-    leave_ded = 0.0 if emp.get("leave_paid", 1) else leave * daily
+    leave_ded = unpaid * daily + (0.0 if emp.get("leave_paid", 1) else leave_legacy * daily)
+    holiday_days = plan.holiday_pay_days if plan is not None else 0.0
+    holiday_pay = holiday_days * daily
     short_ded = s.short_hours * hourly if emp.get("deduct_short") else 0.0
 
     fp_count = s.missing_punches
@@ -42,7 +52,7 @@ def calculate(emp, s, rules=None):
     fp_edited = fp_manual not in (None, "")
     fp_amount = float(fp_manual) if fp_edited else fp_auto
 
-    gross = salary + allowances + ot_pay
+    gross = salary + allowances + ot_pay + holiday_pay
     total_ded = absence_ded + leave_ded + short_ded + penalties + fp_amount + insurance + advance
     net = gross - total_ded
     r = lambda x: round(x + 1e-9, 2)
@@ -53,5 +63,9 @@ def calculate(emp, s, rules=None):
         "absence_ded": r(absence_ded), "leave_ded": r(leave_ded), "short_ded": r(short_ded),
         "fp_count": fp_count, "fp_days": fp_d, "fp_auto": r(fp_auto), "fp_amount": r(fp_amount),
         "fp_edited": fp_edited, "penalties_total": r(penalties + fp_amount),
+        "annual": annual, "unpaid": unpaid, "comp_days": comp_days, "rest_n": rest_n,
+        "holiday_pay_days": holiday_days, "holiday_pay": r(holiday_pay),
+        "comp_credit": (plan.comp_credit if plan is not None else 0.0), "comp_added": float(emp.get("comp_added") or 0),
+        "plan": plan,
         "gross": r(gross), "total_ded": r(total_ded), "net": r(net),
     }

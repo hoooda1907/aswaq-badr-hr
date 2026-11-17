@@ -3,7 +3,7 @@ import base64
 import os
 from html import escape
 
-from . import APP_NAME, DEVELOPER
+from . import DEVELOPER, branding
 from .constants import MONTH_NAMES_AR
 
 
@@ -62,13 +62,15 @@ def _gap(f=1.0):
     return "<p style='margin:0; font-size:%.1fpt'>&nbsp;</p>" % (6 * f)
 
 
-def voucher_html(branch, ym, emp, s, pay, logo_name="logo", scale=1.0, show_logo=True):
+def voucher_html(branch, ym, emp, s, pay, logo_name="logo", scale=1.0, show_logo=True, ledger=None):
     """scale: معامل تصغير/تكبير كل المقاسات. show_logo=False لتوفير مساحة."""
     f = scale
     e = lambda x: escape(str(x))
     pad = max(1, round(4 * f))
     earn = [("المرتب الأساسي", money(pay["salary"])), ("البدلات", money(pay["allowances"])),
             ("الوقت الإضافي (%s ساعة)" % hrs(pay["ot_hours"]), money(pay["ot_pay"]))]
+    if pay["holiday_pay_days"]:
+        earn.append(("أجر العمل في الأجازات الرسمية (%g يوم)" % pay["holiday_pay_days"], money(pay["holiday_pay"])))
     ded = [("خصم أيام الغياب (%d يوم)" % pay["absent"], money(pay["absence_ded"])),
            ("الجزاءات", money(pay["penalties"])), ("خصم التأمينات", money(pay["insurance"])),
            ("السلف", money(pay["advance"]))]
@@ -81,13 +83,13 @@ def voucher_html(branch, ym, emp, s, pay, logo_name="logo", scale=1.0, show_logo
     if pay["short_ded"]:
         ded.append(("خصم نقص ساعات العمل", money(pay["short_ded"])))
     tbl = "<table width='100%%' border='1' cellspacing='0' cellpadding='%d'>" % pad
-    logo = ("<img src='%s' width='%d' height='%d'>" % (logo_name, round(90 * f), round(90 * f))) if show_logo else ""
+    logo = ("<img src='%s' width='%d'>" % (logo_name, round(90 * f))) if show_logo else ""
     html = ["<html><head>", _css(f), "</head><body dir='rtl'>"]
     html.append("<table width='100%%' style='border:none'><tr>"
                 "<td style='border:none' width='20%%'>%s</td>"
                 "<td style='border:none' align='center'><span class='title'>%s</span><br>"
                 "<span style='font-size:%.1fpt'><b>سند مرتب</b> — %s</span></td>"
-                "<td style='border:none' width='20%%'></td></tr></table>%s" % (logo, e(APP_NAME), 14 * f, month_label(ym), _gap(f)))
+                "<td style='border:none' width='20%%'></td></tr></table>%s" % (logo, e(branding.name()), 14 * f, month_label(ym), _gap(f)))
     html.append(tbl + "<tr><th>الكود</th><td>%s</td><th>الاسم</th><td>%s</td><th>الفرع</th><td>%s</td></tr></table>%s"
                 % (e(emp["code"]), e(emp["name"]), e(branch), _gap(f)))
     html.append(tbl + "<tr><td colspan='2' class='sec' align='center'>بيانات الحضور</td></tr>")
@@ -96,9 +98,17 @@ def voucher_html(branch, ym, emp, s, pay, logo_name="logo", scale=1.0, show_logo
     html.append(_row("عدد بصمات الدخول", s.in_punches))
     html.append(_row("عدد بصمات الخروج", s.out_punches))
     html.append(_row("عدد البصمات الناقصة", s.missing_punches))
-    html.append(_row("أيام الراحة الأسبوعية المستحقة", s.rest))
-    html.append(_row("إجازة بإذن", pay["leave"]))
+    html.append(_row("الراحة الأسبوعية (المستحق %d)" % s.rest, pay["rest_n"]))
+    html.append(_row("إجازة سنوية", pay["annual"]))
+    html.append(_row("إجازة بإذن / بدون أجر", pay["leave"]))
     html.append(_row("أيام الغياب", pay["absent"]))
+    if pay["comp_days"]:
+        html.append(_row("خصم من رصيد البدلات (يوم)", pay["comp_days"]))
+    if pay["comp_credit"]:
+        html.append(_row("بدل أجازة رسمية مضاف للرصيد (يوم)", "%g" % pay["comp_credit"]))
+    if ledger:
+        html.append(_row("رصيد الإجازة السنوية المتبقي (من %g يوم)" % ledger["entitlement"], "%g" % ledger["annual_left"]))
+        html.append(_row("رصيد بدلات الإجازة (يوم)", "%g" % ledger["comp_balance"]))
     html.append(_row("إجمالي أيام الشهر", s.month_days))
     html.append(_row("إجمالي ساعات العمل", hrs(s.total_hours)))
     html.append(_row("متوسط ساعات العمل اليومي", hrs(s.avg_hours)))
@@ -116,11 +126,11 @@ def voucher_html(branch, ym, emp, s, pay, logo_name="logo", scale=1.0, show_logo
                 "<td style='border:none' align='center'>توقيع المستلم<br>.....................</td></tr></table>")
     if (emp.get("notes") or "").strip():
         html.append(_gap(f) + tbl + "<tr><th width='15%%'>ملاحظات</th><td>%s</td></tr></table>" % e(emp["notes"]))
-    html.append("<p class='small' align='center'>%s — %s</p></body></html>" % (e(APP_NAME), e(DEVELOPER)))
+    html.append("<p class='small' align='center'>%s — %s</p></body></html>" % (e(branding.name()), e(DEVELOPER)))
     return "".join(html)
 
 
-def punches_html(branch, ym, emp, days, s, scale=1.0, show_logo=True, logo_name="logo"):
+def punches_html(branch, ym, emp, days, s, scale=1.0, show_logo=True, logo_name="logo", plan=None):
     """صفحة بصمات الموظف: جدول كل أيام الشهر بالدخول والخروج والشيفت وعلامات التحوّل والبصمات اليتيمة."""
     import calendar
     from datetime import date
@@ -130,14 +140,14 @@ def punches_html(branch, ym, emp, days, s, scale=1.0, show_logo=True, logo_name=
     pad = max(1, round(3 * f))
     y, m = int(ym[:4]), int(ym[5:7])
     nd = calendar.monthrange(y, m)[1]
-    logo = ("<img src='%s' width='%d' height='%d'>" % (logo_name, round(60 * f), round(60 * f))) if show_logo else ""
+    logo = ("<img src='%s' width='%d'>" % (logo_name, round(60 * f))) if show_logo else ""
     h = ["<html><head>", _css(f), "</head><body dir='rtl'>",
          "<table width='100%%' style='border:none'><tr><td style='border:none' width='12%%'>%s</td>"
          "<td style='border:none' align='center'><span class='title'>كشف البصمات</span><br>"
          "<b>%s</b> — كود %s — الفرع: %s — %s — الشيفت: %s</td></tr></table>%s"
          % (logo, e(emp["name"]), e(emp["code"]), e(branch), month_label(ym), e(s.shift_label or "—"), _gap(f)),
          "<table width='100%%' border='1' cellspacing='0' cellpadding='%d'>"
-         "<tr><th>التاريخ</th><th>اليوم</th><th>الشيفت</th><th>الدخول</th><th>الخروج</th><th>الساعات</th><th>ملاحظات</th></tr>" % pad]
+         "<tr><th>التاريخ</th><th>اليوم</th><th>الحالة</th><th>الشيفت</th><th>الدخول</th><th>الخروج</th><th>الساعات</th><th>ملاحظات</th></tr>" % pad]
     orph_map = getattr(days, "orphans", {})
     for d in range(1, nd + 1):
         dt = date(y, m, d)
@@ -149,10 +159,14 @@ def punches_html(branch, ym, emp, days, s, scale=1.0, show_logo=True, logo_name=
             tout = rec.out_dt.strftime("%H:%M" if rec.out_dt.date() == dt else "%H:%M (%d/%m)") if rec.out_dt else ""
             note = " - ".join(x for x in (rec.note, onote) if x)
             bg = "#fff3cd" if not rec.complete else ("#d6eaf8" if rec.change else "")
-            cells = [SHIFT_LABELS[rec.shift], tin, tout, hrs(rec.hours) if rec.complete else "", note]
+            cells = ["حضور", SHIFT_LABELS[rec.shift], tin, tout, hrs(rec.hours) if rec.complete else "", note]
         else:
+            from .leaves import STATUS_LABELS
             bg = "#ffe8cc" if onote else "#fdecea"
-            cells = ["", "", "", "", onote or "لا توجد بصمة"]
+            st = plan.statuses.get(dt) if plan else None
+            if st in ("rest", "annual", "comp"):
+                bg = "#e8f1fb"
+            cells = [STATUS_LABELS.get(st, ""), "", "", "", "", onote or "لا توجد بصمة"]
         st = " style='background-color:%s'" % bg if bg else ""
         h.append("<tr%s><td align='center'>%02d/%02d/%d</td><td align='center'>%s</td>%s</tr>" % (
             st, d, m, y, DAY_NAMES_AR[dt.weekday()], "".join("<td align='center'>%s</td>" % e(c) for c in cells)))
@@ -162,7 +176,7 @@ def punches_html(branch, ym, emp, days, s, scale=1.0, show_logo=True, logo_name=
              "<th>بصمات الخروج</th><td align='center'>%s</td><th>بصمات ناقصة</th><td align='center'>%s</td>"
              "<th>إجمالي الساعات</th><td align='center'>%s</td></tr></table>"
              % (pad, s.present, s.in_punches, s.out_punches, s.missing_punches, hrs(s.total_hours)))
-    h.append("<p class='small' align='center'>%s — %s</p></body></html>" % (e(APP_NAME), e(DEVELOPER)))
+    h.append("<p class='small' align='center'>%s — %s</p></body></html>" % (e(branding.name()), e(DEVELOPER)))
     return "".join(h)
 
 
@@ -173,7 +187,7 @@ def employees_table_html(branch, ym, items, scale=1.0, logo_name="logo"):
     pad = max(1, round(3 * f))
     h = ["<html><head>", _css(f), "</head><body dir='rtl'>",
          "<p align='center'><span class='title'>%s</span><br><b>كشف الموظفين</b> — الفرع: %s — %s</p>"
-         % (e(APP_NAME), e(branch), month_label(ym)),
+         % (e(branding.name()), e(branch), month_label(ym)),
          "<table width='100%%' border='1' cellspacing='0' cellpadding='%d'><tr>" % pad]
     cols = ["الكود", "الاسم", "الشيفت", "أيام الحضور", "بصمات الدخول", "بصمات الخروج", "ناقصة", "الراحة", "إجازة", "غياب",
             "إجمالي الساعات", "صافي المرتب"]
@@ -183,7 +197,7 @@ def employees_table_html(branch, ym, items, scale=1.0, logo_name="logo"):
                 s.rest, pay["leave"], pay["absent"], hrs(s.total_hours), money(pay["net"])]
         bg = " style='background-color:#fff3cd'" if s.missing_punches else ""
         h.append("<tr%s>%s</tr>" % (bg, "".join("<td align='center'>%s</td>" % e(v) for v in vals)))
-    h.append("</table><p class='small' align='center'>%s — %s</p></body></html>" % (e(APP_NAME), e(DEVELOPER)))
+    h.append("</table><p class='small' align='center'>%s — %s</p></body></html>" % (e(branding.name()), e(DEVELOPER)))
     return "".join(h)
 
 
@@ -218,7 +232,7 @@ def summary_html(branch, ym, items, logo_name="logo"):
     h = ["<html><head>", _CSS, "</head><body dir='rtl'>"]
     h.append("<table width='100%%' style='border:none'><tr><td style='border:none' width='15%%'><img src='%s' width='70' height='70'></td>"
              "<td style='border:none' align='center'><span class='title'>%s</span><br><b>كشف إجمالي المرتبات — %s — %s</b></td>"
-             "<td style='border:none' width='15%%'></td></tr></table><br>" % (logo_name, escape(APP_NAME), escape(branch), month_label(ym)))
+             "<td style='border:none' width='15%%'></td></tr></table><br>" % (logo_name, escape(branding.name()), escape(branch), month_label(ym)))
     h.append("<table width='100%' border='1' cellspacing='0' cellpadding='4'><tr>" + "".join("<th>%s</th>" % c for c, _ in SUMMARY_COLS) + "</tr>")
     for emp, _, _, pay in items:
         cells = ["<td align='center'>%s</td>" % escape(emp["code"]), "<td>%s</td>" % escape(emp["name"])]
@@ -247,7 +261,7 @@ def export_summary_xlsx(path, branch, ym, items):
     ws = wb.active
     ws.title = "المرتبات"
     ws.sheet_view.rightToLeft = True
-    ws.append([APP_NAME, branch, month_label(ym)])
+    ws.append([branding.name(), branch, month_label(ym)])
     ws["A1"].font = Font(bold=True, size=14)
     head = ["الكود", "الاسم", "أيام الحضور", "الراحة", "إجازة", "غياب", "ساعات العمل", "متوسط الساعات",
             "الأساسي", "البدلات", "الإضافي", "خصم الغياب", "الجزاءات", "التأمينات", "السلف", "الصافي"]
