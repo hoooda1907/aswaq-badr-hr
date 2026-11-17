@@ -1,9 +1,9 @@
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from collections import defaultdict
-from aswaq_hr.excel_reader import read_table, extract_punches
-from aswaq_hr.attendance import build_days, summarize, detect_mode
-from aswaq_hr.payroll import calculate
+from rmt_hr.excel_reader import read_table, extract_punches
+from rmt_hr.attendance import build_days, summarize, detect_mode
+from rmt_hr.payroll import calculate
 
 path = sys.argv[1] if len(sys.argv) > 1 else "in-out.xls"
 rows = read_table(path)

@@ -1,10 +1,10 @@
 import os, sys, tempfile
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from aswaq_hr.db import Database
-from aswaq_hr.auth import verify
-from aswaq_hr.excel_reader import read_table, extract_punches
-from aswaq_hr.service import compute_all
-from aswaq_hr import reports
+from rmt_hr.db import Database
+from rmt_hr.auth import verify
+from rmt_hr.excel_reader import read_table, extract_punches
+from rmt_hr.service import compute_all
+from rmt_hr import reports
 
 d = tempfile.mkdtemp()
 db = Database(os.path.join(d, "x.db"))

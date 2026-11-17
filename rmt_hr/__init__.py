@@ -1,0 +1,4 @@
+APP_NAME = "RMT HR"
+APP_ID = "RMT_HR"
+APP_VERSION = "1.0.0"
+DEVELOPER = "Mahmoud Thabet"
