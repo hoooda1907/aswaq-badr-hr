@@ -12,26 +12,27 @@ except ImportError as _e:   # عادةً: مكتبات Visual C++ ناقصة ع�
             0,
             "تعذر تحميل مكتبات الواجهة (Qt).\n\nالحل: ثبّت Microsoft Visual C++ Redistributable (x64) ثم أعد تشغيل البرنامج:\n"
             "https://aka.ms/vs/17/release/vc_redist.x64.exe\n\n"
-            "ملاحظة: هذه النسخة تحتاج ويندوز 10 (إصدار 1809 أو أحدث، 64 بت).\nلو جهازك أقدم استخدم نسخة Legacy (AswaqBadrHR-Legacy-Setup.exe).\n\nالتفاصيل: %s" % _e,
-            "Aswaq Badr HR", 0x10)
+            "ملاحظة: هذه النسخة مخصصة لويندوز 11 (64 بت).\nلو جهازك ويندوز 10 أو أقدم استخدم نسخة Win10-Legacy (RMT_HR-Win10-Legacy-Setup.exe).\n\nالتفاصيل: %s" % _e,
+            "RMT HR", 0x10)
     except Exception:
         pass
     sys.exit(1)
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QDialog
 
-from aswaq_hr import APP_NAME
-from aswaq_hr.db import Database
-from aswaq_hr.ui.branch import BranchWindow
-from aswaq_hr.ui.common import STYLE, data_dir, resource_path
-from aswaq_hr.ui.login import LoginDialog, SetupPasswordDialog
-from aswaq_hr.ui.main_window import MainWindow
+from rmt_hr import APP_NAME, licensing
+from rmt_hr.db import Database
+from rmt_hr.ui.activation import ActivationDialog
+from rmt_hr.ui.branch import BranchWindow
+from rmt_hr.ui.common import STYLE, data_dir, resource_path
+from rmt_hr.ui.login import LoginDialog, SetupPasswordDialog
+from rmt_hr.ui.main_window import MainWindow
 
 
 class Controller:
     def __init__(self, db, user):
         self.db, self.user, self.main = db, user, None
-        self.branch_win = BranchWindow(self.open_branch)
+        self.branch_win = BranchWindow(self.open_branch, db)
 
     def start(self):
         self.branch_win.show()
@@ -59,7 +60,14 @@ def main():
     app.setStyleSheet(STYLE)
     app.setWindowIcon(QIcon(resource_path("assets/icon.ico")))
 
-    db = Database(os.path.join(data_dir(), "aswaq_hr.db"))
+    db = Database(os.path.join(data_dir(), "rmt_hr.db"))
+
+    lic = licensing.License(db, data_dir())
+    licensing.set_current(lic)
+    st = lic.status()
+    if st["state"] == "expired":
+        if ActivationDialog(lic, expired=True, reason=st["reason"]).exec() != QDialog.Accepted:
+            return 0
 
     if db.user_count() == 0:
         SetupPasswordDialog(db).exec()      # الاستخدام الأول (يمكن لمدير النظام الدخول حتى لو أُلغيت)
