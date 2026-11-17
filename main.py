@@ -20,7 +20,7 @@ except ImportError as _e:   # عادةً: مكتبات Visual C++ ناقصة ع�
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QDialog
 
-from rmt_hr import APP_NAME, licensing
+from rmt_hr import APP_NAME, branding, licensing
 from rmt_hr.db import Database
 from rmt_hr.ui.activation import ActivationDialog
 from rmt_hr.ui.branch import BranchWindow
@@ -61,6 +61,10 @@ def main():
     app.setWindowIcon(QIcon(resource_path("assets/icon.ico")))
 
     db = Database(os.path.join(data_dir(), "rmt_hr.db"))
+    branding.load(db, data_dir())          # الاسم والشعار المخصصان (إن وُجدا)
+    app.setApplicationName(branding.name())
+    if branding.logo():
+        app.setWindowIcon(QIcon(branding.logo()))
 
     lic = licensing.License(db, data_dir())
     licensing.set_current(lic)
