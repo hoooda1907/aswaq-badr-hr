@@ -42,7 +42,7 @@ jobs:
           pip install -r ${{ matrix.req }} pyinstaller
 
       - name: Run tests
-        run: python -m unittest tests.test_night_shift tests.test_import_rules tests.test_direction tests.test_licensing tests.test_branches tests.test_printing_logic tests.test_master_edits
+        run: python -m unittest tests.test_night_shift tests.test_import_rules tests.test_direction tests.test_licensing tests.test_branches tests.test_printing_logic tests.test_master_edits tests.test_leaves tests.test_branding
 
       - name: Build EXE (PyInstaller)
         run: >
