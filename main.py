@@ -1,6 +1,22 @@
 import os
 import sys
 
+# فحص سلامة المشروع عند التشغيل من الكود: يوضح الملفات الناقصة بدل خطأ «No module named»
+if not getattr(sys, "frozen", False):
+    _here = os.path.dirname(os.path.abspath(__file__))
+    _need = ["rmt_hr/__init__.py", "rmt_hr/db.py", "rmt_hr/attendance.py", "rmt_hr/ui/main_window.py", "qt_compat.py"]
+    _missing = [f for f in _need if not os.path.exists(os.path.join(_here, *f.split("/")))]
+    if _missing:
+        _msg = ("ملفات البرنامج ناقصة في المجلد:\n%s\n\nالحل: فُكّ ملف المشروع الكامل (full-project.zip) في مجلد جديد،\n"
+                "أو انسخ ملفات التعديلات فوق مجلد المشروع الكامل (وليس في مجلد فارغ).\n\nالملفات الناقصة:\n  %s"
+                % (_here, "\n  ".join(_missing)))
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(0, _msg, "ملفات ناقصة", 0x10)
+        except Exception:
+            print(_msg)
+        sys.exit(1)
+
 import qt_compat  # noqa: F401  (يجب أن يسبق أي استيراد لـ PySide)
 
 try:
