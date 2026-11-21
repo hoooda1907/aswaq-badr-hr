@@ -1,7 +1,7 @@
 import os, sys, unittest
 from datetime import datetime, date
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from aswaq_hr.attendance import build_days, detect_mode, summarize
+from rmt_hr.attendance import build_days, detect_mode, summarize
 
 
 def dt(d, hm):

@@ -2,14 +2,14 @@ import os, sys, tempfile, unittest
 from datetime import datetime
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from openpyxl import Workbook, load_workbook
-from aswaq_hr.db import Database
-from aswaq_hr.service import compute_all, compute_employee
-from aswaq_hr.payroll import fp_days
-from aswaq_hr.constants import DEFAULT_FP_RULES
-from aswaq_hr.excel_reader import read_table, extract_punches
-from aswaq_hr.employee_import import parse_employee_sheet, apply_employee_data
-from aswaq_hr.templates import export_employee_template, export_punch_template
-from aswaq_hr import reports
+from rmt_hr.db import Database
+from rmt_hr.service import compute_all, compute_employee
+from rmt_hr.payroll import fp_days
+from rmt_hr.constants import DEFAULT_FP_RULES
+from rmt_hr.excel_reader import read_table, extract_punches
+from rmt_hr.employee_import import parse_employee_sheet, apply_employee_data
+from rmt_hr.templates import export_employee_template, export_punch_template
+from rmt_hr import reports
 
 BR, YM = "فرع المساكن", "2026-10"
 
@@ -164,7 +164,7 @@ class ImportEmployees(unittest.TestCase):
         self.assertEqual(len(rep["clipped"]), 1)
 
     def test_bad_sheet_errors(self):
-        from aswaq_hr.excel_reader import ReadError
+        from rmt_hr.excel_reader import ReadError
         with self.assertRaises(ReadError):
             parse_employee_sheet([["الاسم", "الراتب"], ["أ", 100]])
 
@@ -176,10 +176,10 @@ class Templates(unittest.TestCase):
         wb = load_workbook(p)
         self.assertEqual(wb.sheetnames, ["بيانات الموظفين", "تعليمات"])
         ws = wb.active
-        ws.append(["3", "علي", 1000, 1, 2, 3, 4, "ن", 0, 0]); wb.save(p)
+        ws.append(["3", "علي", 1000, 1, 2, 3, 4, "ن", 21, 0, 0]); wb.save(p)
         cols, recs, _ = parse_employee_sheet(read_table(p))
         self.assertEqual(cols, ["code", "name", "salary", "allowances", "penalties", "insurance", "advance",
-                                "notes", "absent", "leave"])
+                                "notes", "annual", "absent", "leave"])
         self.assertEqual((recs[0]["code"], recs[0]["advance"]), ("3", 4.0))
 
     def test_empty_punch_template_has_no_data_and_filled_one_imports(self):
